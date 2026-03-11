@@ -60,22 +60,44 @@ def _fetch_all_records(limit: int = 1000) -> List[Dict[str, Any]]:
 
 def _load_fallback_csv() -> pd.DataFrame:
     """
-    Load a fallback CSV from data/dataset.csv if it exists.
+    Load a fallback CSV from the local data directory if it exists.
 
     Raises DataFetchError if the file does not exist or cannot be read.
     """
     project_root = Path(__file__).resolve().parent
-    csv_path = project_root / "data" / "dataset.csv"
+    data_dir = project_root / "data"
 
-    if not csv_path.exists():
+    if not data_dir.exists():
         raise DataFetchError(
-            "Unable to fetch data from the CKAN API and no fallback CSV found at "
-            f"'{csv_path}'. Please ensure network access to data.gov.au or provide "
-            "a local CSV at data/dataset.csv."
+            "Unable to fetch data from the CKAN API and no local data directory "
+            "found at 'data/'. Please ensure network access to data.gov.au or "
+            "place one or more CSV files in a 'data' folder."
+        )
+
+    # Prefer a file named 'dataset.csv' if present, otherwise fall back to the
+    # first *.csv file in the data directory.
+    preferred = data_dir / "dataset.csv"
+    csv_path: Optional[Path] = None
+
+    if preferred.exists():
+        csv_path = preferred
+    else:
+        csv_files = sorted(data_dir.glob("*.csv"))
+        if csv_files:
+            csv_path = csv_files[0]
+
+    if csv_path is None:
+        raise DataFetchError(
+            "Unable to fetch data from the CKAN API and no CSV files were found in "
+            f"'{data_dir}'. Please ensure network access to data.gov.au or place a "
+            "CSV file (for example '2023-biannual-one-incident-report.csv') in the "
+            "'data' directory."
         )
 
     try:
-        return pd.read_csv(csv_path)
+        # Many government/open-data CSVs are encoded in ISO-8859-1 (latin-1) rather
+        # than UTF-8. Using latin-1 avoids UnicodeDecodeError for bytes like 0xA0.
+        return pd.read_csv(csv_path, encoding="latin1")
     except Exception as exc:
         raise DataFetchError(
             f"Failed to read fallback CSV at '{csv_path}': {exc}"
