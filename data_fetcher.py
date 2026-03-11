@@ -2,6 +2,8 @@ import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+# pyright: reportMissingImports=false
+
 import pandas as pd
 from ckanapi import RemoteCKAN, CKANAPIError
 from dotenv import load_dotenv
