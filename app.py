@@ -23,19 +23,88 @@ def load_data() -> pd.DataFrame:
     return fetch_data()
 
 
+def _priority_sort_key(val: object) -> tuple:
+    """Numeric-aware sort key for Incident Priority Rating values."""
+    s = "" if val is None else str(val).strip()
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if digits:
+        return (0, int(digits), s)
+    return (1, s)
+
+
 def main() -> None:
     with st.spinner("Loading data..."):
         df = load_data()
 
-    summary = process_data(df)
-    years = list(summary["incidents_by_year"].keys())
+    # Clean column names (same BOM + whitespace stripping as pipeline.py)
+    df_clean = df.copy()
+    df_clean.columns = [str(c).replace("ï»¿", "").strip() for c in df_clean.columns]
+
+    # Parse Year on the full dataset so filter options are always complete
+    df_clean["Year"] = pd.to_datetime(
+        df_clean["Date/Time Opened"], errors="coerce"
+    ).dt.year
+
+    total_rows = len(df_clean)
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         st.title("ViewTrend")
-        st.metric("Total rows loaded", summary["total_incidents"])
-        if years:
-            st.metric("Year range", f"{min(years)} – {max(years)}")
+
+        # ── Filters (above metadata) ──────────────────────────────────────────
+        st.subheader("Filters")
+
+        year_range: tuple[int, int] = st.slider(
+            "📅 Year Range",
+            min_value=2020,
+            max_value=2023,
+            value=(2020, 2023),
+        )
+
+        all_groups = sorted(df_clean["Incident Group"].dropna().unique().tolist())
+        selected_groups: list[str] = st.multiselect(
+            "🗂️ Incident Group",
+            options=all_groups,
+            default=all_groups,
+        )
+
+        all_directorates = sorted(
+            df_clean["Operational Directorate"].dropna().unique().tolist()
+        )
+        selected_directorates: list[str] = st.multiselect(
+            "🏫 Operational Directorate",
+            options=all_directorates,
+            default=all_directorates,
+        )
+
+        all_priorities = sorted(
+            df_clean["Incident Priority Rating"].dropna().unique().tolist(),
+            key=_priority_sort_key,
+        )
+        selected_priorities: list[str] = st.multiselect(
+            "⚠️ Incident Priority Rating",
+            options=all_priorities,
+            default=all_priorities,
+        )
+
+        # Apply filters
+        if selected_groups and selected_directorates and selected_priorities:
+            filtered_df = df_clean[
+                (df_clean["Year"].between(year_range[0], year_range[1]))
+                & (df_clean["Incident Group"].isin(selected_groups))
+                & (df_clean["Operational Directorate"].isin(selected_directorates))
+                & (df_clean["Incident Priority Rating"].isin(selected_priorities))
+            ]
+        else:
+            filtered_df = df_clean.iloc[0:0]  # empty but schema-preserving
+
+        # Filter count callout
+        st.caption(f"Showing **{len(filtered_df):,}** of {total_rows:,} incidents")
+
+        st.divider()
+
+        # ── Metadata (below filters) ──────────────────────────────────────────
+        st.metric("Total rows loaded", total_rows)
         st.metric("Last refreshed", dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
 
         with st.expander("📊 About this data"):
@@ -46,6 +115,25 @@ def main() -> None:
                 "priority ratings, operational directorates, and principal "
                 "networks across public schools in New South Wales."
             )
+
+    # ── Empty filter guard ────────────────────────────────────────────────────
+    if filtered_df.empty:
+        st.warning(
+            "No incidents match the current filters. Please adjust your selection."
+        )
+        st.stop()
+
+    # ── Process filtered data ─────────────────────────────────────────────────
+    summary = process_data(filtered_df)
+    years = list(summary["incidents_by_year"].keys())
+
+    # ── Filter state key (used to detect staleness of AI insights) ────────────
+    current_filter_key = (
+        year_range,
+        tuple(sorted(selected_groups)),
+        tuple(sorted(selected_directorates)),
+        tuple(sorted(selected_priorities)),
+    )
 
     # ── Two-column layout ─────────────────────────────────────────────────────
     left, right = st.columns([1.2, 1])
@@ -110,7 +198,6 @@ def main() -> None:
             cat_matrix = overlay.get("tier_category_matrix", {})
             if cat_matrix:
                 st.markdown("**Top Incident Categories by Socioeconomic Tier**")
-                # Build a DataFrame: rows = tiers, columns = union of top categories
                 all_cats: set[str] = set()
                 for cats in cat_matrix.values():
                     all_cats.update(cats.keys())
@@ -133,7 +220,9 @@ def main() -> None:
                     short = tier.split(" (")[0] if " (" in tier else tier
                     trend_rows[short] = by_year
                 if trend_rows:
-                    trend_df = pd.DataFrame(trend_rows).fillna(0).astype(int).sort_index()
+                    trend_df = (
+                        pd.DataFrame(trend_rows).fillna(0).astype(int).sort_index()
+                    )
                     st.line_chart(trend_df)
 
             # SEIFA reference footnote
@@ -151,9 +240,23 @@ def main() -> None:
     with right:
         st.header("AI Insights")
 
+        # Detect whether filters have changed since insights were last generated
+        last_filter_key = st.session_state.get("insights_filter_key")
+        insights_are_stale = (
+            "insights" in st.session_state
+            and last_filter_key is not None
+            and last_filter_key != current_filter_key
+        )
+
+        if insights_are_stale:
+            st.info(
+                "⚠️ Filters have changed — click Regenerate Insights to update AI analysis."
+            )
+
         if "insights" not in st.session_state:
             with st.spinner("Generating AI insights..."):
                 st.session_state["insights"] = generate_insights(summary)
+                st.session_state["insights_filter_key"] = current_filter_key
 
         insights: dict = st.session_state["insights"]
 
@@ -175,6 +278,7 @@ def main() -> None:
         if st.button("🔄 Regenerate Insights"):
             with st.spinner("Regenerating AI insights..."):
                 st.session_state["insights"] = generate_insights(summary)
+                st.session_state["insights_filter_key"] = current_filter_key
             st.rerun()
 
 
