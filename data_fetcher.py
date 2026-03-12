@@ -60,9 +60,12 @@ def _fetch_all_records(limit: int = 1000) -> List[Dict[str, Any]]:
 
 def _load_fallback_csv() -> pd.DataFrame:
     """
-    Load a fallback CSV from the local data directory if it exists.
+    Load and combine all incident CSV files from the local data directory.
 
-    Raises DataFetchError if the file does not exist or cannot be read.
+    Files containing 'advantaged' or 'LGA' in their name are excluded
+    (those are socioeconomic reference files, not incident reports).
+
+    Raises DataFetchError if the directory is missing or no files can be read.
     """
     project_root = Path(__file__).resolve().parent
     data_dir = project_root / "data"
@@ -74,34 +77,41 @@ def _load_fallback_csv() -> pd.DataFrame:
             "place one or more CSV files in a 'data' folder."
         )
 
-    # Prefer a file named 'dataset.csv' if present, otherwise fall back to the
-    # first *.csv file in the data directory.
-    preferred = data_dir / "dataset.csv"
-    csv_path: Optional[Path] = None
+    incident_files = sorted(
+        f for f in data_dir.glob("*.csv")
+        if "advantaged" not in f.name.lower() and "lga" not in f.name.lower()
+    )
 
-    if preferred.exists():
-        csv_path = preferred
-    else:
-        csv_files = sorted(data_dir.glob("*.csv"))
-        if csv_files:
-            csv_path = csv_files[0]
-
-    if csv_path is None:
+    if not incident_files:
         raise DataFetchError(
-            "Unable to fetch data from the CKAN API and no CSV files were found in "
-            f"'{data_dir}'. Please ensure network access to data.gov.au or place a "
-            "CSV file (for example '2023-biannual-one-incident-report.csv') in the "
-            "'data' directory."
+            "Unable to fetch data from the CKAN API and no incident CSV files were "
+            f"found in '{data_dir}'. Please ensure network access to data.gov.au or "
+            "place the biannual incident report CSVs in the 'data' directory."
         )
 
-    try:
-        # Many government/open-data CSVs are encoded in ISO-8859-1 (latin-1) rather
-        # than UTF-8. Using latin-1 avoids UnicodeDecodeError for bytes like 0xA0.
-        return pd.read_csv(csv_path, encoding="latin1")
-    except Exception as exc:
+    frames: List[pd.DataFrame] = []
+    for csv_path in incident_files:
+        try:
+            # Many government CSVs are latin-1 encoded. Reading with latin-1 is safe
+            # for all byte values; we clean up the UTF-8 BOM artifact below.
+            df = pd.read_csv(csv_path, encoding="latin1")
+            # Some 2020/2021 files have a UTF-8 BOM that latin-1 renders as 'ï»¿'.
+            # Strip it from every column name so the schema stays consistent.
+            df.columns = [
+                c.replace("ï»¿", "").strip() if isinstance(c, str) else c
+                for c in df.columns
+            ]
+            frames.append(df)
+        except Exception:
+            continue  # skip unreadable files rather than failing the entire load
+
+    if not frames:
         raise DataFetchError(
-            f"Failed to read fallback CSV at '{csv_path}': {exc}"
-        ) from exc
+            f"All CSV files in '{data_dir}' failed to load. "
+            "Please check that the incident report CSV files are present and readable."
+        )
+
+    return pd.concat(frames, ignore_index=True)
 
 
 def fetch_data() -> pd.DataFrame:

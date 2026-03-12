@@ -3,3 +3,4 @@ pandas
 numpy
 ckanapi
 python-dotenv
+groq

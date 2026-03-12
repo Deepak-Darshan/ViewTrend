@@ -1,96 +1,114 @@
+from __future__ import annotations
+
 import datetime as dt
 
 import pandas as pd
 import streamlit as st
 
-from data_fetcher import fetch_data, DataFetchError
-from pipeline import run_pipeline
+from data_fetcher import fetch_data
+from pipeline import process_data
+from ai_insights import generate_insights
 
 
 st.set_page_config(
-    page_title="ViewTrend – Australian Public Sector Insights",
+    page_title="ViewTrend — NSW School Incident Insights",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 
 @st.cache_data(show_spinner=False)
-def load_data_cached() -> pd.DataFrame:
-    """Cached wrapper around the CKAN/CSV data fetcher."""
+def load_data() -> pd.DataFrame:
+    """Load and cache the NSW school incidents dataset."""
     return fetch_data()
 
 
 def main() -> None:
-    st.title("ViewTrend")
-    st.caption(
-        "AI-powered dashboard that analyses Australian public sector datasets, "
-        "auto-detects anomalies, and generates plain-English insights."
-    )
+    with st.spinner("Loading data..."):
+        df = load_data()
 
-    # Sidebar controls
+    summary = process_data(df)
+    years = list(summary["incidents_by_year"].keys())
+
+    # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.header("Data controls")
+        st.title("ViewTrend")
+        st.metric("Total rows loaded", summary["total_incidents"])
+        if years:
+            st.metric("Year range", f"{min(years)} – {max(years)}")
+        st.metric("Last refreshed", dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
 
-        # Last fetched timestamp stored in session state for display
-        last_fetched = st.session_state.get("last_fetched")
-        if last_fetched is not None:
-            st.markdown(f"**Last fetched:** {last_fetched}")
-        else:
-            st.markdown("**Last fetched:** Not yet fetched")
-
-        refresh = st.button("🔄 Refresh Data")
-        if refresh:
-            # Clear the cache so next load pulls fresh data from the API
-            load_data_cached.clear()
-            st.session_state["last_fetched"] = dt.datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
+        with st.expander("📊 About this data"):
+            st.markdown(
+                "This dashboard analyses NSW Government school incident reports "
+                "published as open data. The dataset covers biannual incident "
+                "summaries from 2020 to 2023, including incident categories, "
+                "priority ratings, operational directorates, and principal "
+                "networks across public schools in New South Wales."
             )
-            st.experimental_rerun()
 
-    # Main content
-    try:
-        with st.spinner("Fetching latest data from data.gov.au..."):
-            df = load_data_cached()
-            if "last_fetched" not in st.session_state:
-                st.session_state["last_fetched"] = dt.datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
-    except DataFetchError as exc:
-        st.error(
-            "Unable to load data.\n\n"
-            f"**Details:** {exc}\n\n"
-            "Please check your network connection or provide a fallback CSV at "
-            "`data/dataset.csv`."
+    # ── Two-column layout ─────────────────────────────────────────────────────
+    left, right = st.columns([1.2, 1])
+
+    # ── Left column ───────────────────────────────────────────────────────────
+    with left:
+        st.title("ViewTrend — NSW School Incident Insights")
+
+        # Dataset overview metrics
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Incidents", summary["total_incidents"])
+        c2.metric(
+            "Year Range",
+            f"{min(years)} – {max(years)}" if years else "N/A",
         )
-        return
+        c3.metric("Categories", len(summary["incidents_by_category"]))
 
-    if df.empty:
-        st.warning("The dataset is empty. Please check the source data.")
-        return
+        # Line chart: incidents by year
+        st.subheader("Incidents by Year")
+        st.line_chart(pd.DataFrame({"Incidents": summary["incidents_by_year"]}))
 
-    summary_stats, anomalies = run_pipeline(df)
+        # Bar chart: top 8 primary categories
+        st.subheader("Top 8 Primary Categories")
+        top8 = dict(list(summary["incidents_by_category"].items())[:8])
+        st.bar_chart(pd.DataFrame({"Count": top8}))
 
-    st.subheader("Raw data")
-    st.dataframe(df, use_container_width=True)
+        # Anomalies table
+        st.subheader("Detected Anomalies")
+        if summary["anomalies"]:
+            st.dataframe(pd.DataFrame(summary["anomalies"]), use_container_width=True)
+        else:
+            st.info("No statistical anomalies detected in the dataset.")
 
-    st.subheader("Summary statistics")
-    if not summary_stats.empty:
-        st.dataframe(summary_stats, use_container_width=True)
-    else:
-        st.info("No numeric columns available for summary statistics.")
+    # ── Right column ──────────────────────────────────────────────────────────
+    with right:
+        st.header("AI Insights")
 
-    st.subheader("Detected anomalies")
-    if not anomalies.empty and anomalies["is_anomaly"].any():
-        st.dataframe(
-            anomalies[anomalies["is_anomaly"]],
-            use_container_width=True,
-        )
-    else:
-        st.info(
-            "No anomalies detected using the current heuristic "
-            "(z-score based, configurable in `pipeline.py`)."
-        )
+        if "insights" not in st.session_state:
+            with st.spinner("Generating AI insights..."):
+                st.session_state["insights"] = generate_insights(summary)
+
+        insights: dict = st.session_state["insights"]
+
+        st.subheader("Key Trends")
+        for item in insights.get("key_trends", []):
+            st.markdown(f"- {item}")
+
+        st.subheader("Anomalies Identified")
+        for item in insights.get("anomalies_identified", []):
+            st.markdown(f"- {item}")
+
+        st.subheader("Business Implications")
+        for item in insights.get("business_implications", []):
+            st.markdown(f"- {item}")
+
+        st.subheader("Executive Summary")
+        st.info(insights.get("executive_summary", "No summary available."))
+
+        if st.button("🔄 Regenerate Insights"):
+            with st.spinner("Regenerating AI insights..."):
+                st.session_state["insights"] = generate_insights(summary)
+            st.rerun()
 
 
 if __name__ == "__main__":
     main()
-

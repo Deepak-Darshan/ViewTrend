@@ -39,8 +39,8 @@ def process_data(df: pd.DataFrame) -> dict:
 
     df = df.copy()
 
-    # Strip whitespace from all column names (handles e.g. 'Term ').
-    df.columns = [str(c).strip() for c in df.columns]
+    # Strip whitespace and any UTF-8 BOM artifact (ï»¿) from column names.
+    df.columns = [str(c).replace("ï»¿", "").strip() for c in df.columns]
 
     missing = [c for c in required_columns if c not in df.columns]
     if missing:
