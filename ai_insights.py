@@ -27,17 +27,30 @@ _FALLBACK: dict = {
 }
 
 
+def _get_api_key() -> str:
+    """Return GROQ_API_KEY from Streamlit secrets (Cloud) or .env (local)."""
+    try:
+        import streamlit as st
+        key = st.secrets.get("GROQ_API_KEY", "")
+        if key:
+            return str(key).strip()
+    except Exception:
+        pass
+    return os.getenv("GROQ_API_KEY", "").strip()
+
+
 def generate_insights(summary: dict) -> dict:
     """
     Take the dict returned by process_data(), call the Groq API, and
     return a dict with keys: key_trends, anomalies_identified,
     business_implications, executive_summary.
     """
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    api_key = _get_api_key()
     if not api_key:
         result = dict(_FALLBACK)
         result["executive_summary"] = (
-            "GROQ_API_KEY is not set. Add it to your .env file and restart."
+            "GROQ_API_KEY is not set. Add it to your .env file (local) "
+            "or Streamlit Cloud Secrets (deployed)."
         )
         return result
 
