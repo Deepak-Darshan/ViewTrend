@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from lga_overlay import build_overlay
+
 
 def process_data(df: pd.DataFrame) -> dict:
     """Process the NSW school incidents DataFrame and return summary stats."""
@@ -123,6 +125,9 @@ def process_data(df: pd.DataFrame) -> dict:
         [] if n == 0 else summaries.sample(n=n, random_state=42).tolist()
     )
 
+    # LGA disadvantage overlay
+    lga_overlay = build_overlay(df)
+
     return {
         "total_incidents": total_incidents,
         "incidents_by_year": incidents_by_year,
@@ -132,6 +137,7 @@ def process_data(df: pd.DataFrame) -> dict:
         "priority_distribution": priority_distribution,
         "anomalies": anomalies,
         "sample_summaries": sample_summaries,
+        "lga_overlay": lga_overlay,
     }
 
 

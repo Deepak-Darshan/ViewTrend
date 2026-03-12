@@ -79,6 +79,74 @@ def main() -> None:
         else:
             st.info("No statistical anomalies detected in the dataset.")
 
+        # ── LGA Disadvantage Overlay ───────────────────────────────────────
+        overlay = summary.get("lga_overlay", {})
+        if overlay:
+            st.subheader("LGA Disadvantage Overlay")
+
+            tier_counts = overlay.get("tier_counts", {})
+            tier_rate = overlay.get("tier_incident_rate", {})
+            reference = overlay.get("reference_lgas", {})
+
+            # Key finding callout
+            key_finding = overlay.get("key_finding", "")
+            if key_finding:
+                st.info(key_finding)
+
+            # Tier summary metrics
+            tiers = [
+                "Disadvantaged (Connected Communities)",
+                "Regional / Rural",
+                "Advantaged (Metropolitan)",
+            ]
+            cols = st.columns(len(tiers))
+            for col, tier in zip(cols, tiers):
+                count = tier_counts.get(tier, 0)
+                rate = tier_rate.get(tier, 0)
+                short = tier.split(" (")[0] if " (" in tier else tier
+                col.metric(short, f"{count:,} incidents", f"{rate:.0f} per network")
+
+            # Stacked bar: top categories by tier
+            cat_matrix = overlay.get("tier_category_matrix", {})
+            if cat_matrix:
+                st.markdown("**Top Incident Categories by Socioeconomic Tier**")
+                # Build a DataFrame: rows = tiers, columns = union of top categories
+                all_cats: set[str] = set()
+                for cats in cat_matrix.values():
+                    all_cats.update(cats.keys())
+                rows = {}
+                for tier in tiers:
+                    if tier in cat_matrix:
+                        rows[tier.split(" (")[0] if " (" in tier else tier] = {
+                            cat: cat_matrix[tier].get(cat, 0) for cat in all_cats
+                        }
+                if rows:
+                    chart_df = pd.DataFrame(rows).T.fillna(0).astype(int)
+                    st.bar_chart(chart_df)
+
+            # Year trend by tier
+            tier_year = overlay.get("tier_year_series", {})
+            if tier_year:
+                st.markdown("**Incident Trend by Socioeconomic Tier**")
+                trend_rows: dict[str, dict] = {}
+                for tier, by_year in tier_year.items():
+                    short = tier.split(" (")[0] if " (" in tier else tier
+                    trend_rows[short] = by_year
+                if trend_rows:
+                    trend_df = pd.DataFrame(trend_rows).fillna(0).astype(int).sort_index()
+                    st.line_chart(trend_df)
+
+            # SEIFA reference footnote
+            nsw_adv = reference.get("nsw_advantaged_lgas", [])
+            if nsw_adv:
+                st.caption(
+                    f"SEIFA source: ABS Socio-Economic Indexes for Areas 2021. "
+                    f"Top NSW advantaged LGAs (national top 10): {', '.join(nsw_adv)}. "
+                    f"'Disadvantaged' tier uses NSW DoE Connected Communities directorate "
+                    f"as a validated proxy — no NSW LGAs appear in the national "
+                    f"top-10 most disadvantaged list."
+                )
+
     # ── Right column ──────────────────────────────────────────────────────────
     with right:
         st.header("AI Insights")

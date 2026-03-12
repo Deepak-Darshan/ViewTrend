@@ -56,6 +56,22 @@ def generate_insights(summary: dict) -> dict:
 
     client = Groq(api_key=api_key)
 
+    overlay = summary.get("lga_overlay", {})
+    overlay_section = ""
+    if overlay:
+        overlay_section = (
+            f"lga_overlay_tier_counts: {json.dumps(overlay.get('tier_counts', {}))}\n"
+            f"lga_overlay_incidents_per_network: {json.dumps(overlay.get('tier_incident_rate', {}))}\n"
+            f"lga_overlay_top_categories_by_tier: {json.dumps(overlay.get('tier_category_matrix', {}))}\n"
+            f"lga_overlay_key_finding: {json.dumps(overlay.get('key_finding', ''))}\n"
+            "Note: 'Disadvantaged (Connected Communities)' = NSW DoE schools in the most "
+            "remote/socioeconomically disadvantaged communities (SEIFA proxy). "
+            "'Advantaged (Metropolitan)' = schools in metropolitan areas encompassing "
+            "the top NSW SEIFA LGAs (Woollahra, Mosman, Ku-ring-gai, North Sydney, "
+            "Waverley, Lane Cove). Please incorporate the socioeconomic equity angle "
+            "prominently in your insights.\n"
+        )
+
     user_message = (
         "Below are summary statistics from NSW Government school incident reports "
         "(2020–2023). Return ONLY valid JSON — no markdown, no preamble — in exactly "
@@ -72,6 +88,7 @@ def generate_insights(summary: dict) -> dict:
         f"priority_distribution: {json.dumps(summary.get('priority_distribution', {}))}\n"
         f"anomalies: {json.dumps(summary.get('anomalies', []))}\n"
         f"sample_summaries: {json.dumps(summary.get('sample_summaries', []))}\n"
+        + overlay_section
     )
 
     try:
